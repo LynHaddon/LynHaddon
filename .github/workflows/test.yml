@@ -1,0 +1,75 @@
+name: CI Pipeline
+
+on:
+  - push
+  - pull_request
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [stable, oldstable]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.runtime }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.runtime }}
+          cache: false
+
+      - name: Install dependencies
+        if: hashFiles('go.mod') != ''
+        run: go mod download
+        shell: bash
+
+      - name: Check formatting
+        if: hashFiles('go.mod') != ''
+        run: test -z "$(gofmt -l $(find . -path './.git' -prune -o -name '*.go' -print))"
+        shell: bash
+
+      - name: Check lint
+        if: hashFiles('go.mod') != ''
+        run: go vet ./...
+        shell: bash
+
+      - name: Build or typecheck
+        if: hashFiles('go.mod') != ''
+        run: go test ./...
+        shell: bash
+
+      - name: Run unit and integration tests
+        if: hashFiles('go.mod') != ''
+        run: go test -race ./...
+        shell: bash
+
+      - name: Summarize pipeline
+        if: always()
+        env:
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          GO_SETUP_OUTCOME: ${{ steps.setup-go.outcome }}
+          DEPS_OUTCOME: ${{ steps.dependencies.outcome }}
+          FORMAT_OUTCOME: ${{ steps.format.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          printf '%s\n' '## CI Pipeline' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '| Step | Outcome |' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '| --- | --- |' >> "$GITHUB_STEP_SUMMARY"
+          for step in checkout setup-go dependencies format lint build test; do
+            outcome="${!step}_OUTCOME"
+            printf '| %s | %s |\n' "$step" "$outcome" >> "$GITHUB_STEP_SUMMARY"
+          done
+        shell: bash
